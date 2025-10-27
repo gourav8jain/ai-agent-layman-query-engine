@@ -269,9 +269,10 @@ class QueryGenerator:
         if not main_table:
             main_table = tables[0]
         
-        # Remove duplicates
-        other_tables = [t for t in tables if t != main_table]
+        # Remove duplicates - filter out main_table and deduplicate
+        other_tables = [t for t in tables if t != main_table and t is not None]
         other_tables = list(dict.fromkeys(other_tables))  # Remove duplicates while preserving order
+        print(f"DEBUG: Deduplicated other_tables: {other_tables}")
         
         # Build FROM clause with unique aliases
         used_aliases = {'w'}  # Track used aliases
@@ -297,7 +298,14 @@ class QueryGenerator:
         join_clauses = []
         
         # Build JOIN clauses with proper relationships
+        processed_tables = set()  # Track which tables we've already joined
         for table in other_tables:
+            # Skip if we've already processed this table
+            if table in processed_tables:
+                print(f"DEBUG: Skipping duplicate table '{table}'")
+                continue
+            processed_tables.add(table)
+            
             table_alias = aliases[table]
             prev_tables = [main_table] + other_tables[:other_tables.index(table)]
             
@@ -364,13 +372,19 @@ class QueryGenerator:
         
         join_str = " ".join(join_clauses) if join_clauses else ""
         
-        # Build SELECT clause
+        # Build SELECT clause - ensure no duplicate references
         select_cols = f"{aliases[main_table]}.*"
+        seen_aliases = {aliases[main_table]}
         for table in other_tables:
-            select_cols += f", {aliases[table]}.*"
+            table_alias = aliases[table]
+            if table_alias not in seen_aliases:
+                select_cols += f", {table_alias}.*"
+                seen_aliases.add(table_alias)
+            else:
+                print(f"DEBUG: Warning - skipping duplicate alias '{table_alias}' for table '{table}'")
         
         query_sql = f"SELECT {select_cols} {from_clause} {join_str} LIMIT 100;"
-        print(f"DEBUG: Generated query: {query_sql}")
+        print(f"DEBUG: Final query: {query_sql}")
         return query_sql
     
     def _extract_conditions(self, query: str, schema_columns: list) -> str:
