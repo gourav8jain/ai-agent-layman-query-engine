@@ -1,0 +1,161 @@
+.query-result {
+  max-width: 1200px;
+  margin: 20px auto;
+  background-color: white;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.result-header {
+  padding: 20px;
+  border-bottom: 1px solid #e5e5e5;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.result-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.result-summary {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.result-count {
+  font-size: 14px;
+  color: #666;
+}
+
+.result-tabs {
+  display: flex;
+  border-bottom: 1px solid #e5e5e5;
+  background-color: #f9f9f9;
+}
+
+.result-tabs button {
+  padding: 12px 24px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #666;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.result-tabs button:hover {
+  background-color: #f0f0f0;
+}
+
+.result-tabs button.active {
+  color: #10a37f;
+  border-bottom-color: #10a37f;
+}
+
+.result-content {
+  padding: 20px;
+  min-height: 200px;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.summary-content h4 {
+  margin-bottom: 15px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.summary-info {
+  display: flex;
+  gap: 30px;
+  margin-bottom: 25px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.summary-label {
+  font-size: 12px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.summary-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: #10a37f;
+}
+
+.column-list {
+  margin-bottom: 25px;
+}
+
+.column-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.column-tag {
+  padding: 6px 12px;
+  background-color: #f0f2f5;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #333;
+  font-family: monospace;
+}
+
+.numeric-stats {
+  margin-top: 20px;
+}
+
+.no-numeric-stats,
+.summary-loading {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+}
+
+.no-numeric-stats p,
+.summary-loading p {
+  font-size: 14px;
+  margin: 0;
+}
+
+.summary-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.summary-table th,
+.summary-table td {
+  padding: 10px;
+  text-align: left;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.summary-table th {
+  background-color: #f9f9f9;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #666;
+}
+
+.summary-table td {
+  font-size: 14px;
+}
+

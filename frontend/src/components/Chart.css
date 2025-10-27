@@ -1,0 +1,21 @@
+.charts-container {
+  padding: 20px;
+}
+
+.chart-wrapper {
+  margin-bottom: 40px;
+}
+
+.chart-wrapper h4 {
+  margin-bottom: 15px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.no-data {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+}
+
