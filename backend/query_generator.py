@@ -102,12 +102,32 @@ class QueryGenerator:
         if re.search(r'show\s+(me\s+)?all|list\s+all|get\s+all|get\s+me', query_lower):
             # Check if multiple tables are mentioned BEFORE returning
             potential_tables = []
+            table_scores = {}
+            
             for table in tables:
-                # Use fuzzy matching
+                # Use fuzzy matching with scoring
                 if fuzzy_match_table(user_query, table):
+                    # Calculate relevance score
+                    score = 0
+                    table_lower = table.lower()
+                    
+                    # High priority for exact business terms
+                    if 'wallet' in table_lower and 'wallet' in query_lower:
+                        score += 100
+                    if 'vcc' in table_lower and 'vcc' in query_lower:
+                        score += 100
+                    if ('org' in table_lower or 'organisation' in table_lower or 'organization' in table_lower) and ('org' in query_lower or 'organisation' in query_lower or 'organization' in query_lower):
+                        score += 100
+                    
+                    # Lower priority for generic/technical tables
+                    if 'account' in table_lower or 'detail' in table_lower:
+                        score -= 50
+                    
+                    table_scores[table] = score
+                    
                     if table not in potential_tables:
                         potential_tables.append(table)
-                        print(f"DEBUG: potential_tables added (fuzzy): {table}")
+                        print(f"DEBUG: potential_tables added (fuzzy): {table} (score: {score})")
                 
                 # Also try exact matching as backup
                 table_lower = table.lower()
@@ -133,7 +153,9 @@ class QueryGenerator:
             print(f"DEBUG: potential_tables found: {potential_tables}")
             if len(potential_tables) >= 2:
                 print(f"DEBUG: Generating JOIN query for: {potential_tables}")
-                return self._generate_join_query(potential_tables, schema_info, query_lower)
+                # Sort by score (highest first) to prioritize business tables
+                sorted_tables = sorted(potential_tables, key=lambda t: table_scores.get(t, 0), reverse=True)
+                return self._generate_join_query(sorted_tables, schema_info, query_lower)
             
             # Otherwise, return first matching table
             if potential_tables:
@@ -160,9 +182,15 @@ class QueryGenerator:
                     # Try again with updated tables
                     if len(potential_tables) >= 2:
                         print(f"DEBUG: Now generating JOIN query for: {potential_tables}")
-                        return self._generate_join_query(potential_tables, schema_info, query_lower)
+                        # Sort by score (highest first)
+                        sorted_tables = sorted(potential_tables, key=lambda t: table_scores.get(t, 0), reverse=True)
+                        return self._generate_join_query(sorted_tables, schema_info, query_lower)
                 
-                return f"SELECT * FROM {potential_tables[0]} LIMIT 100;"
+                # Sort tables by score and return best match
+                if potential_tables:
+                    sorted_tables = sorted(potential_tables, key=lambda t: table_scores.get(t, 0), reverse=True)
+                    print(f"DEBUG: Using best table (by score): {sorted_tables[0]}")
+                    return f"SELECT * FROM {sorted_tables[0]} LIMIT 100;"
         
         # Pattern: "count X"
         if 'count' in query_lower:
