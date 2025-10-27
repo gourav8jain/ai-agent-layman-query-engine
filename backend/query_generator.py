@@ -251,6 +251,12 @@ class QueryGenerator:
         if len(tables) < 2:
             return f"SELECT * FROM {tables[0]} LIMIT 100;"
         
+        # Remove duplicate tables while preserving order
+        tables = list(dict.fromkeys(tables))
+        
+        if len(tables) < 2:
+            return f"SELECT * FROM {tables[0]} LIMIT 100;"
+        
         print(f"DEBUG: Generating JOIN for tables: {tables}")
         
         # Determine the main table (usually wallets if present)
@@ -263,17 +269,29 @@ class QueryGenerator:
         if not main_table:
             main_table = tables[0]
         
+        # Remove duplicates
         other_tables = [t for t in tables if t != main_table]
+        other_tables = list(dict.fromkeys(other_tables))  # Remove duplicates while preserving order
         
-        # Build FROM clause
+        # Build FROM clause with unique aliases
+        used_aliases = {'w'}  # Track used aliases
         aliases = {main_table: 'w'}  # Wallet is 'w'
+        
         for i, table in enumerate(other_tables):
             if 'org' in table.lower() or 'organisation' in table.lower() or 'organization' in table.lower():
-                aliases[table] = 'o'
+                alias = 'o' if 'o' not in used_aliases else chr(97 + i)
             elif 'vcc' in table.lower():
-                aliases[table] = 'v'
+                alias = 'v' if 'v' not in used_aliases else chr(97 + i)
             else:
-                aliases[table] = chr(97 + i)  # a, b, c, etc.
+                # Generate unique alias starting from 'a'
+                alias = chr(97 + i)
+            
+            # If alias is already used, find next available
+            while alias in used_aliases:
+                alias = chr(ord(alias) + 1)
+            
+            aliases[table] = alias
+            used_aliases.add(alias)
         
         from_clause = f"FROM {main_table} {aliases[main_table]}"
         join_clauses = []
