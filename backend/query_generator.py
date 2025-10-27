@@ -40,21 +40,29 @@ class QueryGenerator:
             query_lower = query_text.lower()
             table_lower = table_name.lower()
             
-            # Exact match or part of table name
-            if table_lower in query_lower or table_lower in query_lower.split():
-                return True
+            # Extract keywords from query
+            query_words = query_lower.split()
+            important_words = []
+            for word in query_words:
+                # Skip common words
+                if word not in ['get', 'me', 'all', 'the', 'of', 'and', 'or', 'a', 'an', 'is', 'are', 'was', 'were']:
+                    important_words.append(word)
+            
+            # Split table name by underscores/dashes
+            table_parts = table_lower.replace('_', ' ').replace('-', ' ').split()
+            
+            # Check if any table part matches any important word
+            for part in table_parts:
+                if len(part) > 2:  # Minimum 3 char words
+                    for word in important_words:
+                        # Check exact match or substring
+                        if part in word or word in part:
+                            return True
             
             # Check for key components in table name
-            keywords = ['wallet', 'vcc', 'org', 'organisation', 'organization', 'account', 'detail']
+            keywords = ['wallet', 'vcc', 'org', 'organisation', 'organization', 'account', 'detail', 'organizations', 'oragnisations']
             for keyword in keywords:
                 if keyword in table_lower and keyword in query_lower:
-                    return True
-            
-            # Remove common suffixes for fuzzy matching
-            base_table = table_lower.replace('_', ' ').replace('-', ' ')
-            base_words = base_table.split()
-            for word in base_words:
-                if len(word) > 3 and word in query_lower:
                     return True
             
             return False
@@ -129,6 +137,31 @@ class QueryGenerator:
             
             # Otherwise, return first matching table
             if potential_tables:
+                # If we only found 1 table but query mentions multiple entities, 
+                # try harder to find related tables
+                if len(potential_tables) == 1 and ('wallet' in query_lower or 'vcc' in query_lower or 'organisation' in query_lower or 'organization' in query_lower):
+                    # Try to find additional related tables
+                    for table in tables:
+                        table_lower = table.lower()
+                        if table not in potential_tables:
+                            # Look for wallet-related tables
+                            if 'wallet' in query_lower and 'wallet' in table_lower:
+                                potential_tables.append(table)
+                                print(f"DEBUG: Added additional wallet table: {table}")
+                            # Look for vcc-related tables
+                            elif 'vcc' in query_lower and 'vcc' in table_lower:
+                                potential_tables.append(table)
+                                print(f"DEBUG: Added additional vcc table: {table}")
+                            # Look for organisation-related tables
+                            elif ('organisation' in query_lower or 'organization' in query_lower or 'oragnisation' in query_lower) and ('org' in table_lower or 'organisation' in table_lower or 'organization' in table_lower):
+                                potential_tables.append(table)
+                                print(f"DEBUG: Added additional org table: {table}")
+                    
+                    # Try again with updated tables
+                    if len(potential_tables) >= 2:
+                        print(f"DEBUG: Now generating JOIN query for: {potential_tables}")
+                        return self._generate_join_query(potential_tables, schema_info, query_lower)
+                
                 return f"SELECT * FROM {potential_tables[0]} LIMIT 100;"
         
         # Pattern: "count X"
