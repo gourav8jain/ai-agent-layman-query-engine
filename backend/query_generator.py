@@ -223,49 +223,109 @@ class QueryGenerator:
         if len(tables) < 2:
             return f"SELECT * FROM {tables[0]} LIMIT 100;"
         
-        # Try to find relationships between tables
-        # Look for foreign key patterns: table_id, org_id, etc.
+        print(f"DEBUG: Generating JOIN for tables: {tables}")
         
-        # Build FROM clause with JOINs
-        from_clause = f"FROM {tables[0]}"
+        # Determine the main table (usually wallets if present)
+        main_table = None
+        for table in tables:
+            if 'wallet' in table.lower():
+                main_table = table
+                break
+        
+        if not main_table:
+            main_table = tables[0]
+        
+        other_tables = [t for t in tables if t != main_table]
+        
+        # Build FROM clause
+        aliases = {main_table: 'w'}  # Wallet is 'w'
+        for i, table in enumerate(other_tables):
+            if 'org' in table.lower() or 'organisation' in table.lower() or 'organization' in table.lower():
+                aliases[table] = 'o'
+            elif 'vcc' in table.lower():
+                aliases[table] = 'v'
+            else:
+                aliases[table] = chr(97 + i)  # a, b, c, etc.
+        
+        from_clause = f"FROM {main_table} {aliases[main_table]}"
         join_clauses = []
         
-        # Get columns from each table
-        main_table_cols = [col['name'] for col in schema_info.get(tables[0], [])]
-        
-        for i, table in enumerate(tables[1:], 1):
-            # Try to find relationship
-            # Option 1: table_id in main table
-            fk_pattern = f"{table}_id"
-            rfk_pattern = f"{tables[0]}_id"
+        # Build JOIN clauses with proper relationships
+        for table in other_tables:
+            table_alias = aliases[table]
+            prev_tables = [main_table] + other_tables[:other_tables.index(table)]
             
-            prev_table_cols = [col['name'] for col in schema_info.get(tables[i-1], [])]
-            current_table_cols = [col['name'] for col in schema_info.get(table, [])]
+            # Get columns for this table
+            table_cols = [col['name'] for col in schema_info.get(table, [])]
             
-            # Check if there's a foreign key
-            if fk_pattern in prev_table_cols or fk_pattern in current_table_cols:
-                if fk_pattern in prev_table_cols:
-                    # Previous table has FK to current
-                    join_clauses.append(f"JOIN {table} ON {tables[i-1]}.{fk_pattern} = {table}.id")
-                else:
-                    # Current table has FK to previous
-                    join_clauses.append(f"JOIN {table} ON {tables[i-1]}.id = {table}.{fk_pattern}")
-            elif rfk_pattern in current_table_cols:
-                # Current table has reverse FK
-                join_clauses.append(f"JOIN {table} ON {tables[i-1]}.id = {table}.{rfk_pattern}")
-            else:
-                # Default: try to find any matching column
-                common_cols = set(prev_table_cols) & set(current_table_cols)
+            # Try to find the best join condition
+            join_condition = None
+            
+            # Special handling for organizations joining to wallets
+            if 'org' in table.lower() or 'organisation' in table.lower() or 'organization' in table.lower():
+                # Look for organization_id in wallet table
+                wallet_table = main_table if 'wallet' in main_table.lower() else None
+                if wallet_table:
+                    wallet_cols = [col['name'] for col in schema_info.get(wallet_table, [])]
+                    if 'organization_id' in wallet_cols:
+                        # Join wallets to organizations
+                        join_condition = f"INNER JOIN {table} {table_alias} ON {aliases[wallet_table]}.organization_id = {table_alias}.organization_id"
+            
+            # Special handling for vccs joining to wallets
+            elif 'vcc' in table.lower():
+                # Look for funding_wallet_id or wallet_id in vcc table
+                vcc_cols = table_cols
+                if 'funding_wallet_id' in vcc_cols:
+                    # Join vccs to wallets via funding_wallet_id
+                    join_condition = f"INNER JOIN {table} {table_alias} ON {table_alias}.funding_wallet_id = {aliases[main_table]}.funding_wallet_id"
+                elif 'wallet_id' in vcc_cols:
+                    # Join vccs to wallets via wallet_id
+                    join_condition = f"INNER JOIN {table} {table_alias} ON {table_alias}.wallet_id = {aliases[main_table]}.wallet_id"
+            
+            # Generic foreign key matching
+            if not join_condition:
+                for prev_table in prev_tables:
+                    prev_cols = [col['name'] for col in schema_info.get(prev_table, [])]
+                    
+                    # Check if current table has FK to previous
+                    fk_pattern = f"{prev_table}_id"
+                    if fk_pattern in table_cols:
+                        join_condition = f"INNER JOIN {table} {table_alias} ON {table_alias}.{fk_pattern} = {aliases[prev_table]}.id"
+                        break
+                    
+                    # Check if previous table has FK to current
+                    if fk_pattern in prev_cols:
+                        join_condition = f"INNER JOIN {table} {table_alias} ON {aliases[prev_table]}.{fk_pattern} = {table_alias}.id"
+                        break
+            
+            # Fallback: use common column names
+            if not join_condition and prev_tables:
+                prev_cols = [col['name'] for col in schema_info.get(prev_tables[-1], [])]
+                common_cols = set(prev_cols) & set(table_cols)
                 if common_cols:
                     join_col = list(common_cols)[0]
-                    join_clauses.append(f"JOIN {table} ON {tables[i-1]}.{join_col} = {table}.{join_col}")
-                else:
-                    # Fallback: assume first matching pattern
-                    join_clauses.append(f"JOIN {table} ON {tables[i-1]}.id = {table}.id")
+                    prev_alias = aliases[prev_tables[-1]]
+                    join_condition = f"INNER JOIN {table} {table_alias} ON {prev_alias}.{join_col} = {table_alias}.{join_col}"
+            
+            # Final fallback
+            if not join_condition and prev_tables:
+                prev_alias = aliases[prev_tables[-1]]
+                join_condition = f"INNER JOIN {table} {table_alias} ON {prev_alias}.id = {table_alias}.id"
+            
+            if join_condition:
+                join_clauses.append(join_condition)
+                print(f"DEBUG: Added join: {join_condition}")
         
         join_str = " ".join(join_clauses) if join_clauses else ""
         
-        return f"SELECT {tables[0]}.*, {', '.join([f'{t}.*' for t in tables[1:]])} {from_clause} {join_str} LIMIT 100;"
+        # Build SELECT clause
+        select_cols = f"{aliases[main_table]}.*"
+        for table in other_tables:
+            select_cols += f", {aliases[table]}.*"
+        
+        query_sql = f"SELECT {select_cols} {from_clause} {join_str} LIMIT 100;"
+        print(f"DEBUG: Generated query: {query_sql}")
+        return query_sql
     
     def _extract_conditions(self, query: str, schema_columns: list) -> str:
         """Extract WHERE conditions from natural language"""
