@@ -27,15 +27,15 @@ class QueryGenerator:
             table_singular = table.rstrip('s')  # Remove plural 's'
             table_plural = table
             table_name_variations = [
-                table,
-                table_singular,
-                table + 's',  # Add plural
+                table.lower(),
+                table_singular.lower(),
+                table + 's',
                 table_singular + 's'
             ]
             
             # Also check common aliases
             if 'org' in table_lower := table.lower():
-                table_name_variations.extend(['organisation', 'organizations', 'organization'])
+                table_name_variations.extend(['organisation', 'organizations', 'organization', 'org', 'orgs'])
             if 'wallet' in table_lower:
                 table_name_variations.extend(['wallet', 'wallets'])
             if 'vcc' in table_lower:
@@ -52,11 +52,22 @@ class QueryGenerator:
             return self._generate_join_query(mentioned_tables, schema_info, query_lower)
         
         # Pattern: "show me all X" or "list all X"
-        if re.search(r'show\s+(me\s+)?all|list\s+all|get\s+all', query_lower):
-            # Try to find matching table
+        if re.search(r'show\s+(me\s+)?all|list\s+all|get\s+all|get\s+me', query_lower):
+            # Check if multiple tables are mentioned BEFORE returning
+            potential_tables = []
             for table in tables:
-                if table.lower() in query_lower:
-                    return f"SELECT * FROM {table} LIMIT 100;"
+                table_lower = table.lower()
+                table_singular = table.rstrip('s').lower()
+                if table_lower in query_lower or table_singular in query_lower:
+                    potential_tables.append(table)
+            
+            # If we found multiple tables, generate JOIN
+            if len(potential_tables) >= 2:
+                return self._generate_join_query(potential_tables, schema_info, query_lower)
+            
+            # Otherwise, return first matching table
+            if potential_tables:
+                return f"SELECT * FROM {potential_tables[0]} LIMIT 100;"
         
         # Pattern: "count X"
         if 'count' in query_lower:
