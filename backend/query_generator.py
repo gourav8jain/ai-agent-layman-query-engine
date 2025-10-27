@@ -19,6 +19,38 @@ class QueryGenerator:
         # Extract table and column information from schema
         tables = list(schema_info.keys())
         
+        # Pattern: Detect when multiple tables are mentioned
+        # e.g., "get wallets and vccs of organisations"
+        mentioned_tables = []
+        for table in tables:
+            # Check both singular and plural forms
+            table_singular = table.rstrip('s')  # Remove plural 's'
+            table_plural = table
+            table_name_variations = [
+                table,
+                table_singular,
+                table + 's',  # Add plural
+                table_singular + 's'
+            ]
+            
+            # Also check common aliases
+            if 'org' in table_lower := table.lower():
+                table_name_variations.extend(['organisation', 'organizations', 'organization'])
+            if 'wallet' in table_lower:
+                table_name_variations.extend(['wallet', 'wallets'])
+            if 'vcc' in table_lower:
+                table_name_variations.extend(['vcc', 'vccs'])
+            
+            for variation in table_name_variations:
+                if variation and variation in query_lower:
+                    if table not in mentioned_tables:
+                        mentioned_tables.append(table)
+                    break
+        
+        # If multiple tables are mentioned, try to create a JOIN
+        if len(mentioned_tables) >= 2:
+            return self._generate_join_query(mentioned_tables, schema_info, query_lower)
+        
         # Pattern: "show me all X" or "list all X"
         if re.search(r'show\s+(me\s+)?all|list\s+all|get\s+all', query_lower):
             # Try to find matching table
@@ -78,6 +110,56 @@ class QueryGenerator:
             return f"SELECT * FROM {tables[0]} LIMIT 100;"
         
         return "SELECT 1;"
+    
+    def _generate_join_query(self, tables: list, schema_info: Dict[str, Any], query: str) -> str:
+        """Generate a JOIN query for multiple tables"""
+        
+        if len(tables) < 2:
+            return f"SELECT * FROM {tables[0]} LIMIT 100;"
+        
+        # Try to find relationships between tables
+        # Look for foreign key patterns: table_id, org_id, etc.
+        
+        # Build FROM clause with JOINs
+        from_clause = f"FROM {tables[0]}"
+        join_clauses = []
+        
+        # Get columns from each table
+        main_table_cols = [col['name'] for col in schema_info.get(tables[0], [])]
+        
+        for i, table in enumerate(tables[1:], 1):
+            # Try to find relationship
+            # Option 1: table_id in main table
+            fk_pattern = f"{table}_id"
+            rfk_pattern = f"{tables[0]}_id"
+            
+            prev_table_cols = [col['name'] for col in schema_info.get(tables[i-1], [])]
+            current_table_cols = [col['name'] for col in schema_info.get(table, [])]
+            
+            # Check if there's a foreign key
+            if fk_pattern in prev_table_cols or fk_pattern in current_table_cols:
+                if fk_pattern in prev_table_cols:
+                    # Previous table has FK to current
+                    join_clauses.append(f"JOIN {table} ON {tables[i-1]}.{fk_pattern} = {table}.id")
+                else:
+                    # Current table has FK to previous
+                    join_clauses.append(f"JOIN {table} ON {tables[i-1]}.id = {table}.{fk_pattern}")
+            elif rfk_pattern in current_table_cols:
+                # Current table has reverse FK
+                join_clauses.append(f"JOIN {table} ON {tables[i-1]}.id = {table}.{rfk_pattern}")
+            else:
+                # Default: try to find any matching column
+                common_cols = set(prev_table_cols) & set(current_table_cols)
+                if common_cols:
+                    join_col = list(common_cols)[0]
+                    join_clauses.append(f"JOIN {table} ON {tables[i-1]}.{join_col} = {table}.{join_col}")
+                else:
+                    # Fallback: assume first matching pattern
+                    join_clauses.append(f"JOIN {table} ON {tables[i-1]}.id = {table}.id")
+        
+        join_str = " ".join(join_clauses) if join_clauses else ""
+        
+        return f"SELECT {tables[0]}.*, {', '.join([f'{t}.*' for t in tables[1:]])} {from_clause} {join_str} LIMIT 100;"
     
     def _extract_conditions(self, query: str, schema_columns: list) -> str:
         """Extract WHERE conditions from natural language"""
