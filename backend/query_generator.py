@@ -35,31 +35,53 @@ class QueryGenerator:
                 return table_name[:-1]
             return table_name
         
-        for table in tables:
-            # Check both singular and plural forms
-            table_lower = table.lower()
-            table_singular = get_singular(table_lower)
+        def fuzzy_match_table(query_text, table_name):
+            """Check if query mentions this table with fuzzy matching"""
+            query_lower = query_text.lower()
+            table_lower = table_name.lower()
             
-            table_name_variations = [
+            # Exact match or part of table name
+            if table_lower in query_lower or table_lower in query_lower.split():
+                return True
+            
+            # Check for key components in table name
+            keywords = ['wallet', 'vcc', 'org', 'organisation', 'organization', 'account', 'detail']
+            for keyword in keywords:
+                if keyword in table_lower and keyword in query_lower:
+                    return True
+            
+            # Remove common suffixes for fuzzy matching
+            base_table = table_lower.replace('_', ' ').replace('-', ' ')
+            base_words = base_table.split()
+            for word in base_words:
+                if len(word) > 3 and word in query_lower:
+                    return True
+            
+            return False
+        
+        for table in tables:
+            table_lower = table.lower()
+            
+            # Use fuzzy matching
+            if fuzzy_match_table(user_query, table):
+                if table not in mentioned_tables:
+                    mentioned_tables.append(table)
+                    print(f"DEBUG: Fuzzy matched table '{table}'")
+            
+            # Also try exact/singular/plural matching as fallback
+            table_singular = get_singular(table_lower)
+            variations = [
                 table_lower,
                 table_singular,
                 table_lower + 's' if not table_lower.endswith('s') else table_lower,
                 table_singular + 's',
             ]
             
-            # Also check common aliases
-            if 'org' in table_lower or 'organisation' in table_lower or 'organization' in table_lower:
-                table_name_variations.extend(['organisation', 'organizations', 'organization', 'org', 'orgs', 'organisations'])
-            if 'wallet' in table_lower:
-                table_name_variations.extend(['wallet', 'wallets'])
-            if 'vcc' in table_lower:
-                table_name_variations.extend(['vcc', 'vccs'])
-            
-            for variation in table_name_variations:
-                if variation and variation in query_lower:
+            for variation in variations:
+                if variation and len(variation) > 2 and variation in query_lower:
                     if table not in mentioned_tables:
                         mentioned_tables.append(table)
-                    break
+                        print(f"DEBUG: Matched table '{table}' using variation '{variation}'")
         
         # If multiple tables are mentioned, try to create a JOIN
         if len(mentioned_tables) >= 2:
@@ -73,27 +95,36 @@ class QueryGenerator:
             # Check if multiple tables are mentioned BEFORE returning
             potential_tables = []
             for table in tables:
+                # Use fuzzy matching
+                if fuzzy_match_table(user_query, table):
+                    if table not in potential_tables:
+                        potential_tables.append(table)
+                        print(f"DEBUG: potential_tables added (fuzzy): {table}")
+                
+                # Also try exact matching as backup
                 table_lower = table.lower()
                 table_singular = get_singular(table_lower)
                 
-                # Check multiple variations
-                matches = False
-                if table_lower in query_lower or table_singular in query_lower:
-                    matches = True
-                elif table_lower + 's' in query_lower or table_singular + 's' in query_lower:
-                    matches = True
-                elif 'org' in table_lower and ('organisation' in query_lower or 'organizations' in query_lower or 'organization' in query_lower):
-                    matches = True
-                elif 'wallet' in table_lower and 'wallets' in query_lower:
-                    matches = True
-                elif 'vcc' in table_lower and 'vccs' in query_lower:
-                    matches = True
-                
-                if matches:
-                    potential_tables.append(table)
+                if table not in potential_tables:
+                    matches = False
+                    # Exact match or singular/plural variants
+                    if table_lower in query_lower or table_singular in query_lower:
+                        matches = True
+                    # Check if singular table name matches plural in query
+                    elif table_singular + 's' in query_lower or table_lower + 's' in query_lower:
+                        matches = True
+                    # Check if plural table name matches singular in query
+                    elif table_lower.endswith('s') and table_lower[:-1] in query_lower:
+                        matches = True
+                    
+                    if matches:
+                        potential_tables.append(table)
+                        print(f"DEBUG: potential_tables added: {table}")
             
             # If we found multiple tables, generate JOIN
+            print(f"DEBUG: potential_tables found: {potential_tables}")
             if len(potential_tables) >= 2:
+                print(f"DEBUG: Generating JOIN query for: {potential_tables}")
                 return self._generate_join_query(potential_tables, schema_info, query_lower)
             
             # Otherwise, return first matching table
