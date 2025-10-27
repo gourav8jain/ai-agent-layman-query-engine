@@ -19,23 +19,37 @@ class QueryGenerator:
         # Extract table and column information from schema
         tables = list(schema_info.keys())
         
+        # DEBUG: Print tables and query
+        print(f"DEBUG: Tables in schema: {tables}")
+        print(f"DEBUG: Query: {user_query}")
+        
         # Pattern: Detect when multiple tables are mentioned
         # e.g., "get wallets and vccs of organisations"
         mentioned_tables = []
+        
+        def get_singular(table_name):
+            """Convert plural to singular"""
+            if table_name.endswith('ies'):
+                return table_name[:-3] + 'y'
+            elif table_name.endswith('s') and not table_name.endswith('ss'):
+                return table_name[:-1]
+            return table_name
+        
         for table in tables:
             # Check both singular and plural forms
-            table_singular = table.rstrip('s')  # Remove plural 's'
-            table_plural = table
+            table_lower = table.lower()
+            table_singular = get_singular(table_lower)
+            
             table_name_variations = [
-                table.lower(),
-                table_singular.lower(),
-                table + 's',
-                table_singular + 's'
+                table_lower,
+                table_singular,
+                table_lower + 's' if not table_lower.endswith('s') else table_lower,
+                table_singular + 's',
             ]
             
             # Also check common aliases
-            if 'org' in table_lower := table.lower():
-                table_name_variations.extend(['organisation', 'organizations', 'organization', 'org', 'orgs'])
+            if 'org' in table_lower or 'organisation' in table_lower or 'organization' in table_lower:
+                table_name_variations.extend(['organisation', 'organizations', 'organization', 'org', 'orgs', 'organisations'])
             if 'wallet' in table_lower:
                 table_name_variations.extend(['wallet', 'wallets'])
             if 'vcc' in table_lower:
@@ -49,7 +63,10 @@ class QueryGenerator:
         
         # If multiple tables are mentioned, try to create a JOIN
         if len(mentioned_tables) >= 2:
+            print(f"DEBUG: Found multiple tables: {mentioned_tables}")
             return self._generate_join_query(mentioned_tables, schema_info, query_lower)
+        
+        print(f"DEBUG: Mentioned tables: {mentioned_tables}")
         
         # Pattern: "show me all X" or "list all X"
         if re.search(r'show\s+(me\s+)?all|list\s+all|get\s+all|get\s+me', query_lower):
@@ -57,8 +74,22 @@ class QueryGenerator:
             potential_tables = []
             for table in tables:
                 table_lower = table.lower()
-                table_singular = table.rstrip('s').lower()
+                table_singular = get_singular(table_lower)
+                
+                # Check multiple variations
+                matches = False
                 if table_lower in query_lower or table_singular in query_lower:
+                    matches = True
+                elif table_lower + 's' in query_lower or table_singular + 's' in query_lower:
+                    matches = True
+                elif 'org' in table_lower and ('organisation' in query_lower or 'organizations' in query_lower or 'organization' in query_lower):
+                    matches = True
+                elif 'wallet' in table_lower and 'wallets' in query_lower:
+                    matches = True
+                elif 'vcc' in table_lower and 'vccs' in query_lower:
+                    matches = True
+                
+                if matches:
                     potential_tables.append(table)
             
             # If we found multiple tables, generate JOIN
