@@ -63,18 +63,49 @@ class DatabaseManager:
         
         # Return existing connection if available
         if connection_id in self.active_connections:
-            return self.active_connections[connection_id]
+            existing = self.active_connections[connection_id]
+            db_type = conn_info["db_type"]
+            # Reopen if the connection was closed/idled out
+            try:
+                if db_type == "postgresql":
+                    # asyncpg connection exposes .is_closed()
+                    if getattr(existing, "is_closed", lambda: False)():
+                        del self.active_connections[connection_id]
+                    else:
+                        return existing
+                elif db_type == "mysql":
+                    # PyMySQL: ping will raise if closed; reconnect=True to reopen
+                    try:
+                        existing.ping(reconnect=True)
+                        return existing
+                    except Exception:
+                        del self.active_connections[connection_id]
+                elif db_type == "sqlite":
+                    return existing
+            except Exception:
+                # Fallback to recreate connection
+                if connection_id in self.active_connections:
+                    del self.active_connections[connection_id]
         
         # Create new connection based on database type
         db_type = conn_info["db_type"]
         
         if db_type == "postgresql":
+            # Close old connection if exists
+            if connection_id in self.active_connections:
+                try:
+                    await self.active_connections[connection_id].close()
+                except Exception:
+                    pass
+                del self.active_connections[connection_id]
+            
             conn = await asyncpg.connect(
                 host=conn_info["host"],
                 port=conn_info["port"],
                 user=conn_info["username"],
                 password=conn_info["password"],
-                database=conn_info["database"]
+                database=conn_info["database"],
+                timeout=30  # Increased for Azure
             )
             self.active_connections[connection_id] = conn
             return conn
@@ -160,6 +191,7 @@ class DatabaseManager:
     
     async def get_schema_info(self, connection_id: str) -> Dict[str, Any]:
         """Get database schema information"""
+        conn = None
         try:
             conn = await self.get_connection(connection_id)
             conn_info = self.connections[connection_id]
@@ -193,6 +225,11 @@ class DatabaseManager:
                         }
                         for col in columns
                     ]
+                
+                # Close connection after use
+                if conn and connection_id in self.active_connections:
+                    await conn.close()
+                    del self.active_connections[connection_id]
                 
                 return schema
             
@@ -233,18 +270,53 @@ class DatabaseManager:
             db_type = conn_info["db_type"]
             
             if db_type == "postgresql":
-                rows = await conn.fetch(query)
+                try:
+                    rows = await conn.fetch(query)
+                except Exception as e:
+                    # Retry once on connection closed errors
+                    message = str(e).lower()
+                    if any(x in message for x in ["closed", "reset", "terminated", "connection was closed"]):
+                        # Reconnect and retry once
+                        if connection_id in self.active_connections:
+                            try:
+                                await self.active_connections[connection_id].close()
+                            except Exception:
+                                pass
+                            del self.active_connections[connection_id]
+                        conn = await self.get_connection(connection_id)
+                        rows = await conn.fetch(query)
+                    else:
+                        raise
                 # Convert to list of dicts
                 results = [dict(row) for row in rows]
-                return {
+                result = {
                     "columns": list(results[0].keys()) if results else [],
                     "rows": results,
                     "count": len(results)
                 }
+                
+                # Close connection after use
+                try:
+                    await conn.close()
+                    if connection_id in self.active_connections:
+                        del self.active_connections[connection_id]
+                except Exception:
+                    pass
+                
+                return result
             
             elif db_type == "mysql":
                 cursor = conn.cursor()
-                cursor.execute(query)
+                try:
+                    cursor.execute(query)
+                except Exception:
+                    # attempt reconnect once
+                    try:
+                        conn.ping(reconnect=True)
+                        cursor = conn.cursor()
+                        cursor.execute(query)
+                    except Exception as e:
+                        raise e
                 rows = cursor.fetchall()
                 columns = [desc[0] for desc in cursor.description]
                 results = [dict(zip(columns, row)) for row in rows]

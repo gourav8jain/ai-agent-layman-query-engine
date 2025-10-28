@@ -36,98 +36,93 @@ class QueryGenerator:
             return table_name
         
         def fuzzy_match_table(query_text, table_name):
-            """Check if query mentions this table with fuzzy matching"""
+            """Check if query mentions this table with fuzzy matching - ULTRA STRICT version"""
             query_lower = query_text.lower()
             table_lower = table_name.lower()
             
-            # Extract keywords from query
-            query_words = query_lower.split()
-            important_words = []
-            for word in query_words:
-                # Skip common words
-                if word not in ['get', 'me', 'all', 'the', 'of', 'and', 'or', 'a', 'an', 'is', 'are', 'was', 'were']:
-                    important_words.append(word)
+            # ONLY match the exact core business tables
+            # This prevents ALL over-matching
             
-            # Split table name by underscores/dashes
-            table_parts = table_lower.replace('_', ' ').replace('-', ' ').split()
+            # Check for wallet - ONLY "wallets" table
+            if 'wallet' in query_lower and table_lower == 'wallets':
+                return True
             
-            # Check if any table part matches any important word
-            for part in table_parts:
-                if len(part) > 2:  # Minimum 3 char words
-                    for word in important_words:
-                        # Check exact match or substring
-                        if part in word or word in part:
-                            return True
+            # Check for vcc - ONLY "vccs" table
+            if 'vcc' in query_lower and table_lower == 'vccs':
+                return True
             
-            # Check for key components in table name
-            keywords = ['wallet', 'vcc', 'org', 'organisation', 'organization', 'account', 'detail', 'organizations', 'oragnisations']
-            for keyword in keywords:
-                if keyword in table_lower and keyword in query_lower:
-                    return True
+            # Check for organisation/organization - ONLY "organizations" table
+            if ('org' in query_lower or 'organisation' in query_lower or 'organization' in query_lower) and table_lower == 'organizations':
+                return True
             
             return False
         
-        for table in tables:
-            table_lower = table.lower()
-            
-            # Use fuzzy matching
-            if fuzzy_match_table(user_query, table):
-                if table not in mentioned_tables:
-                    mentioned_tables.append(table)
-                    print(f"DEBUG: Fuzzy matched table '{table}'")
-            
-            # Also try exact/singular/plural matching as fallback
-            table_singular = get_singular(table_lower)
-            variations = [
-                table_lower,
-                table_singular,
-                table_lower + 's' if not table_lower.endswith('s') else table_lower,
-                table_singular + 's',
-            ]
-            
-            for variation in variations:
-                if variation and len(variation) > 2 and variation in query_lower:
-                    if table not in mentioned_tables:
-                        mentioned_tables.append(table)
-                        print(f"DEBUG: Matched table '{table}' using variation '{variation}'")
+        # Extract core business tables (wallets, vccs, organizations) from query
+        core_tables = []
+        query_lower = user_query.lower()
         
-        # If multiple tables are mentioned, try to create a JOIN
-        if len(mentioned_tables) >= 2:
-            print(f"DEBUG: Found multiple tables: {mentioned_tables}")
-            return self._generate_join_query(mentioned_tables, schema_info, query_lower)
+        # Check for wallet references
+        if 'wallet' in query_lower:
+            if 'wallets' in [t.lower() for t in tables]:
+                core_tables.append('wallets')
+                print(f"DEBUG: Added wallets to core tables")
+        
+        # Check for vcc references  
+        if 'vcc' in query_lower:
+            if 'vccs' in [t.lower() for t in tables]:
+                core_tables.append('vccs')
+                print(f"DEBUG: Added vccs to core tables")
+        
+        # Check for organization references
+        if 'org' in query_lower or 'organisation' in query_lower or 'organization' in query_lower:
+            if 'organizations' in [t.lower() for t in tables]:
+                core_tables.append('organizations')
+                print(f"DEBUG: Added organizations to core tables")
+        
+        # Only proceed with JOIN if we have at least 2 core tables
+        print(f"DEBUG: Core tables detected: {core_tables}")
+        if len(core_tables) >= 2:
+            print(f"DEBUG: Calling _generate_join_query with: {core_tables}")
+            return self._generate_join_query(core_tables, schema_info, query_lower)
+        
+        # Otherwise use mentioned_tables for single table queries
+        mentioned_tables = core_tables
         
         print(f"DEBUG: Mentioned tables: {mentioned_tables}")
         
         # Pattern: "show me all X" or "list all X"
         if re.search(r'show\s+(me\s+)?all|list\s+all|get\s+all|get\s+me', query_lower):
-            # Check if multiple tables are mentioned BEFORE returning
-            potential_tables = []
+            # Skip fuzzy matching - use core_tables if available
+            if len(core_tables) >= 1:
+                print(f"DEBUG: Using core_tables for query")
+                # Return the appropriate query based on core_tables
+                if len(core_tables) == 1:
+                    return f"SELECT * FROM {core_tables[0]} LIMIT 100;"
+                elif len(core_tables) >= 2:
+                    return self._generate_join_query(core_tables, schema_info, query_lower)
+            
+            # Only if no core_tables found, use fallback
+            potential_tables = core_tables.copy()
             table_scores = {}
             
             for table in tables:
-                # Use fuzzy matching with scoring
-                if fuzzy_match_table(user_query, table):
-                    # Calculate relevance score
-                    score = 0
-                    table_lower = table.lower()
-                    
-                    # High priority for exact business terms
-                    if 'wallet' in table_lower and 'wallet' in query_lower:
-                        score += 100
-                    if 'vcc' in table_lower and 'vcc' in query_lower:
-                        score += 100
-                    if ('org' in table_lower or 'organisation' in table_lower or 'organization' in table_lower) and ('org' in query_lower or 'organisation' in query_lower or 'organization' in query_lower):
-                        score += 100
-                    
-                    # Lower priority for generic/technical tables
-                    if 'account' in table_lower or 'detail' in table_lower:
-                        score -= 50
-                    
-                    table_scores[table] = score
-                    
+                # Only check if it's an exact core table
+                table_lower = table.lower()
+                if table_lower == 'wallets' and 'wallet' in query_lower:
                     if table not in potential_tables:
                         potential_tables.append(table)
-                        print(f"DEBUG: potential_tables added (fuzzy): {table} (score: {score})")
+                        table_scores[table] = 100
+                        print(f"DEBUG: Added {table} to potential_tables")
+                elif table_lower == 'vccs' and 'vcc' in query_lower:
+                    if table not in potential_tables:
+                        potential_tables.append(table)
+                        table_scores[table] = 100
+                        print(f"DEBUG: Added {table} to potential_tables")
+                elif table_lower == 'organizations' and ('org' in query_lower or 'organisation' in query_lower or 'organization' in query_lower):
+                    if table not in potential_tables:
+                        potential_tables.append(table)
+                        table_scores[table] = 100
+                        print(f"DEBUG: Added {table} to potential_tables")
                 
                 # Also try exact matching as backup
                 table_lower = table.lower()
@@ -246,144 +241,82 @@ class QueryGenerator:
         return "SELECT 1;"
     
     def _generate_join_query(self, tables: list, schema_info: Dict[str, Any], query: str) -> str:
-        """Generate a JOIN query for multiple tables"""
+        """Generate a JOIN query for wallets, vccs, and organizations only"""
         
-        if len(tables) < 2:
-            return f"SELECT * FROM {tables[0]} LIMIT 100;"
-        
-        # Remove duplicate tables while preserving order
+        # Remove duplicates and filter to only our 3 core tables
         tables = list(dict.fromkeys(tables))
+        core_tables = []
         
-        if len(tables) < 2:
+        for table in tables:
+            table_lower = table.lower()
+            if table_lower in ['wallets', 'vccs', 'organizations']:
+                core_tables.append(table)
+        
+        # If not enough core tables, return simple query
+        if len(core_tables) < 2:
+            if core_tables:
+                return f"SELECT * FROM {core_tables[0]} LIMIT 100;"
             return f"SELECT * FROM {tables[0]} LIMIT 100;"
         
-        print(f"DEBUG: Generating JOIN for tables: {tables}")
+        print(f"DEBUG: Generating JOIN for CORE tables: {core_tables}")
         
-        # Determine the main table (usually wallets if present)
-        main_table = None
-        for table in tables:
-            if 'wallet' in table.lower():
-                main_table = table
-                break
+        # Determine main table (wallets)
+        main_table = 'wallets' if 'wallets' in core_tables else core_tables[0]
         
-        if not main_table:
-            main_table = tables[0]
+        # Build fixed aliases - NO DUPLICATES
+        aliases = {main_table: 'w'}
+        used_aliases = {'w'}
         
-        # Remove duplicates - filter out main_table and deduplicate
-        other_tables = [t for t in tables if t != main_table and t is not None]
-        other_tables = list(dict.fromkeys(other_tables))  # Remove duplicates while preserving order
-        print(f"DEBUG: Deduplicated other_tables: {other_tables}")
-        
-        # Build FROM clause with unique aliases
-        used_aliases = {'w'}  # Track used aliases
-        aliases = {main_table: 'w'}  # Wallet is 'w'
-        
-        for i, table in enumerate(other_tables):
-            if 'org' in table.lower() or 'organisation' in table.lower() or 'organization' in table.lower():
-                alias = 'o' if 'o' not in used_aliases else chr(97 + i)
-            elif 'vcc' in table.lower():
-                alias = 'v' if 'v' not in used_aliases else chr(97 + i)
-            else:
-                # Generate unique alias starting from 'a'
-                alias = chr(97 + i)
+        for table in core_tables:
+            if table == main_table:
+                continue
             
-            # If alias is already used, find next available
-            while alias in used_aliases:
-                alias = chr(ord(alias) + 1)
-            
-            aliases[table] = alias
-            used_aliases.add(alias)
+            table_lower = table.lower()
+            if 'org' in table_lower or 'organisation' in table_lower or 'organization' in table_lower:
+                if 'o' not in used_aliases:
+                    aliases[table] = 'o'
+                    used_aliases.add('o')
+                else:
+                    # Skip if already used
+                    print(f"DEBUG: Skipping {table} - alias 'o' already used")
+                    continue
+            elif 'vcc' in table_lower:
+                if 'v' not in used_aliases:
+                    aliases[table] = 'v'
+                    used_aliases.add('v')
+                else:
+                    # Skip if already used
+                    print(f"DEBUG: Skipping {table} - alias 'v' already used")
+                    continue
         
         from_clause = f"FROM {main_table} {aliases[main_table]}"
         join_clauses = []
         
-        # Build JOIN clauses with proper relationships
-        processed_tables = set()  # Track which tables we've already joined
-        for table in other_tables:
-            # Skip if we've already processed this table
-            if table in processed_tables:
-                print(f"DEBUG: Skipping duplicate table '{table}'")
+        # Build SELECT with only unique aliases
+        select_cols = []
+        for table, alias in aliases.items():
+            select_cols.append(f"{alias}.*")
+        
+        # Build JOIN clauses
+        for table in core_tables:
+            if table == main_table or table not in aliases:
                 continue
-            processed_tables.add(table)
             
             table_alias = aliases[table]
-            prev_tables = [main_table] + other_tables[:other_tables.index(table)]
             
-            # Get columns for this table
-            table_cols = [col['name'] for col in schema_info.get(table, [])]
-            
-            # Try to find the best join condition
-            join_condition = None
-            
-            # Special handling for organizations joining to wallets
+            # Organizations join
             if 'org' in table.lower() or 'organisation' in table.lower() or 'organization' in table.lower():
-                # Look for organization_id in wallet table
-                wallet_table = main_table if 'wallet' in main_table.lower() else None
-                if wallet_table:
-                    wallet_cols = [col['name'] for col in schema_info.get(wallet_table, [])]
-                    if 'organization_id' in wallet_cols:
-                        # Join wallets to organizations
-                        join_condition = f"INNER JOIN {table} {table_alias} ON {aliases[wallet_table]}.organization_id = {table_alias}.organization_id"
+                join_clauses.append(f"INNER JOIN {table} {table_alias} ON w.organization_id = {table_alias}.organization_id")
+                print(f"DEBUG: Added org join for {table}")
             
-            # Special handling for vccs joining to wallets
+            # VCCs join
             elif 'vcc' in table.lower():
-                # Look for funding_wallet_id or wallet_id in vcc table
-                vcc_cols = table_cols
-                if 'funding_wallet_id' in vcc_cols:
-                    # Join vccs to wallets via funding_wallet_id
-                    join_condition = f"INNER JOIN {table} {table_alias} ON {table_alias}.funding_wallet_id = {aliases[main_table]}.funding_wallet_id"
-                elif 'wallet_id' in vcc_cols:
-                    # Join vccs to wallets via wallet_id
-                    join_condition = f"INNER JOIN {table} {table_alias} ON {table_alias}.wallet_id = {aliases[main_table]}.wallet_id"
-            
-            # Generic foreign key matching
-            if not join_condition:
-                for prev_table in prev_tables:
-                    prev_cols = [col['name'] for col in schema_info.get(prev_table, [])]
-                    
-                    # Check if current table has FK to previous
-                    fk_pattern = f"{prev_table}_id"
-                    if fk_pattern in table_cols:
-                        join_condition = f"INNER JOIN {table} {table_alias} ON {table_alias}.{fk_pattern} = {aliases[prev_table]}.id"
-                        break
-                    
-                    # Check if previous table has FK to current
-                    if fk_pattern in prev_cols:
-                        join_condition = f"INNER JOIN {table} {table_alias} ON {aliases[prev_table]}.{fk_pattern} = {table_alias}.id"
-                        break
-            
-            # Fallback: use common column names
-            if not join_condition and prev_tables:
-                prev_cols = [col['name'] for col in schema_info.get(prev_tables[-1], [])]
-                common_cols = set(prev_cols) & set(table_cols)
-                if common_cols:
-                    join_col = list(common_cols)[0]
-                    prev_alias = aliases[prev_tables[-1]]
-                    join_condition = f"INNER JOIN {table} {table_alias} ON {prev_alias}.{join_col} = {table_alias}.{join_col}"
-            
-            # Final fallback
-            if not join_condition and prev_tables:
-                prev_alias = aliases[prev_tables[-1]]
-                join_condition = f"INNER JOIN {table} {table_alias} ON {prev_alias}.id = {table_alias}.id"
-            
-            if join_condition:
-                join_clauses.append(join_condition)
-                print(f"DEBUG: Added join: {join_condition}")
+                join_clauses.append(f"INNER JOIN {table} {table_alias} ON {table_alias}.funding_wallet_id = w.funding_wallet_id")
+                print(f"DEBUG: Added vcc join for {table}")
         
-        join_str = " ".join(join_clauses) if join_clauses else ""
+        join_str = " ".join(join_clauses)
         
-        # Build SELECT clause - ensure no duplicate references
-        select_cols = f"{aliases[main_table]}.*"
-        seen_aliases = {aliases[main_table]}
-        for table in other_tables:
-            table_alias = aliases[table]
-            if table_alias not in seen_aliases:
-                select_cols += f", {table_alias}.*"
-                seen_aliases.add(table_alias)
-            else:
-                print(f"DEBUG: Warning - skipping duplicate alias '{table_alias}' for table '{table}'")
-        
-        query_sql = f"SELECT {select_cols} {from_clause} {join_str} LIMIT 100;"
+        query_sql = f"SELECT {', '.join(select_cols)} {from_clause} {join_str} LIMIT 100;"
         print(f"DEBUG: Final query: {query_sql}")
         return query_sql
     
