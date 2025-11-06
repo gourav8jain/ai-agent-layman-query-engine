@@ -90,6 +90,10 @@ class QueryGenerator:
         
         print(f"DEBUG: Mentioned tables: {mentioned_tables}")
         
+        # Check for filter conditions FIRST (before generating query)
+        where_conditions = self._extract_conditions(user_query, schema_info, core_tables if core_tables else mentioned_tables)
+        print(f"DEBUG: Extracted WHERE conditions: {where_conditions}")
+        
         # Pattern: "show me all X" or "list all X"
         if re.search(r'show\s+(me\s+)?all|list\s+all|get\s+all|get\s+me', query_lower):
             # Skip fuzzy matching - use core_tables if available
@@ -97,9 +101,17 @@ class QueryGenerator:
                 print(f"DEBUG: Using core_tables for query")
                 # Return the appropriate query based on core_tables
                 if len(core_tables) == 1:
-                    return f"SELECT * FROM {core_tables[0]} LIMIT 100;"
+                    table_name = core_tables[0]
+                    if where_conditions:
+                        return f"SELECT * FROM {table_name} WHERE {where_conditions} LIMIT 100;"
+                    return f"SELECT * FROM {table_name} LIMIT 100;"
                 elif len(core_tables) >= 2:
-                    return self._generate_join_query(core_tables, schema_info, query_lower)
+                    join_query = self._generate_join_query(core_tables, schema_info, query_lower)
+                    if where_conditions:
+                        # Add WHERE clause to JOIN query
+                        join_query = join_query.rstrip(';')
+                        return f"{join_query} WHERE {where_conditions};"
+                    return join_query
             
             # Only if no core_tables found, use fallback
             potential_tables = core_tables.copy()
@@ -184,8 +196,11 @@ class QueryGenerator:
                 # Sort tables by score and return best match
                 if potential_tables:
                     sorted_tables = sorted(potential_tables, key=lambda t: table_scores.get(t, 0), reverse=True)
-                    print(f"DEBUG: Using best table (by score): {sorted_tables[0]}")
-                    return f"SELECT * FROM {sorted_tables[0]} LIMIT 100;"
+                    table_name = sorted_tables[0]
+                    print(f"DEBUG: Using best table (by score): {table_name}")
+                    if where_conditions:
+                        return f"SELECT * FROM {table_name} WHERE {where_conditions} LIMIT 100;"
+                    return f"SELECT * FROM {table_name} LIMIT 100;"
         
         # Pattern: "count X"
         if 'count' in query_lower:
@@ -199,7 +214,7 @@ class QueryGenerator:
             for table in tables:
                 if table.lower() in query_lower:
                     # Extract potential conditions
-                    conditions = self._extract_conditions(user_query, schema_info.get(table, []))
+                    conditions = self._extract_conditions(user_query, schema_info, [table])
                     if conditions:
                         return f"SELECT * FROM {table} WHERE {conditions} LIMIT 100;"
                     else:
@@ -320,24 +335,109 @@ class QueryGenerator:
         print(f"DEBUG: Final query: {query_sql}")
         return query_sql
     
-    def _extract_conditions(self, query: str, schema_columns: list) -> str:
+    def _extract_conditions(self, query: str, schema_info: Dict[str, Any], tables: list) -> str:
         """Extract WHERE conditions from natural language"""
-        # Very simple extraction - in production, use LLM
+        print(f"DEBUG: _extract_conditions called with query: '{query}', tables: {tables}")
+        query_lower = query.lower()
         conditions = []
         
-        # Look for common patterns
-        if 'status' in query.lower():
-            # Try to find status value
-            if 'active' in query.lower():
-                conditions.append("status = 'active'")
-            elif 'inactive' in query.lower():
-                conditions.append("status = 'inactive'")
+        # Get the first table to check columns
+        if not tables:
+            print(f"DEBUG: No tables provided, returning empty conditions")
+            return ""
         
-        if 'id' in query.lower():
+        table_name = tables[0] if isinstance(tables, list) else tables
+        print(f"DEBUG: Using table: '{table_name}'")
+        schema_columns = schema_info.get(table_name, [])
+        print(f"DEBUG: Schema columns for {table_name}: {len(schema_columns)} columns")
+        column_names = [col['name'].lower() if isinstance(col, dict) else str(col).lower() for col in schema_columns]
+        print(f"DEBUG: Column names: {column_names[:5]}...")  # Print first 5 columns
+        
+        # Pattern: "name matches with X" or "name matches X" or "name like X"
+        # Also handle: "matches the name as X" or "which matches name as X"
+        match_patterns = [
+            # Standard: "name matches with X" or "name matches X"
+            r'(?:of\s+)?(\w+)\s+matches\s+(?:with\s+)?(["\']?)(\w+)',
+            # Reverse: "matches the name as X" or "matches name as X"
+            r'matches\s+(?:the\s+)?(\w+)\s+as\s+(["\']?)(\w+)',
+            # Reverse with "with": "matches the name with X"
+            r'matches\s+(?:the\s+)?(\w+)\s+with\s+(["\']?)(\w+)',
+            # Other patterns
+            r'(?:of\s+)?(\w+)\s+like\s+(["\']?)(\w+)',
+            r'(?:of\s+)?(\w+)\s+contains\s+(["\']?)(\w+)',
+            r'(?:of\s+)?(\w+)\s+equals\s+(["\']?)(\w+)',
+            r'(?:of\s+)?(\w+)\s+is\s+(["\']?)(\w+)',
+            r'(?:of\s+)?(\w+)\s+=\s+(["\']?)(\w+)',
+        ]
+        
+        for pattern in match_patterns:
+            matches = re.finditer(pattern, query_lower, re.IGNORECASE)
+            for match in matches:
+                print(f"DEBUG: Pattern matched: {pattern}")
+                print(f"DEBUG: Match groups: {match.groups()}")
+                column_candidate = match.group(1).lower()
+                # For patterns with 3 groups, value is group 3, otherwise group 2
+                if len(match.groups()) >= 3:
+                    value = match.group(3).strip("'\"")
+                else:
+                    value = match.group(2).strip("'\"")
+                print(f"DEBUG: Extracted column_candidate: '{column_candidate}', value: '{value}'")
+                
+                # Find matching column name
+                matched_column = None
+                for col in column_names:
+                    col_clean = col.lower().replace('_', ' ')
+                    # Check if column_candidate matches the column name
+                    # e.g., "name" should match "organization_name" or "name"
+                    if (column_candidate == col or 
+                        column_candidate in col_clean or 
+                        col_clean.endswith(column_candidate) or
+                        col.endswith('_' + column_candidate)):
+                        matched_column = col
+                        print(f"DEBUG: Matched column '{column_candidate}' to '{col}'")
+                        break
+                
+                if matched_column:
+                    # Use ILIKE for case-insensitive matching (PostgreSQL)
+                    if 'matches' in match.group(0) or 'like' in match.group(0) or 'contains' in match.group(0):
+                        conditions.append(f"{matched_column} ILIKE '%{value}%'")
+                    else:
+                        conditions.append(f"{matched_column} = '{value}'")
+                    print(f"DEBUG: Extracted condition: {matched_column} matches '{value}'")
+        
+        print(f"DEBUG: Total conditions found: {len(conditions)}")
+        if conditions:
+            print(f"DEBUG: Final WHERE conditions: {' AND '.join(conditions)}")
+        
+        # Pattern: "where X = Y" explicit
+        if 'where' in query_lower:
+            where_match = re.search(r'where\s+(\w+)\s*=\s*(["\']?)(\w+)\2', query_lower)
+            if where_match:
+                col = where_match.group(1).lower()
+                val = where_match.group(3)
+                for column in column_names:
+                    if col in column.lower() or column.lower() in col:
+                        conditions.append(f"{column} = '{val}'")
+                        break
+        
+        # Look for common patterns
+        if 'status' in query_lower:
+            # Try to find status value
+            if 'active' in query_lower:
+                status_col = next((col for col in column_names if 'status' in col or col == 'is_active'), 'status')
+                conditions.append(f"{status_col} = 'active'")
+            elif 'inactive' in query_lower:
+                status_col = next((col for col in column_names if 'status' in col or col == 'is_active'), 'status')
+                conditions.append(f"{status_col} = 'inactive'")
+        
+        if 'id' in query_lower:
             # Try to extract numeric ID
-            numbers = re.findall(r'\d+', query)
+            numbers = re.findall(r'\bid\s*[=:]\s*(\d+)', query_lower)
+            if not numbers:
+                numbers = re.findall(r'\b(\d+)\b', query)
             if numbers:
-                conditions.append(f"id = {numbers[0]}")
+                id_col = next((col for col in column_names if 'id' in col), 'id')
+                conditions.append(f"{id_col} = {numbers[0]}")
         
         return " AND ".join(conditions) if conditions else ""
     
