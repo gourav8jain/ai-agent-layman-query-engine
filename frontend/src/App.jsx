@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react'
 import ChatInterface from './components/ChatInterface'
 import DatabaseConfig from './components/DatabaseConfig'
 import axios from 'axios'
+import { API_BASE_URL } from './config'
 import './App.css'
-
-const API_BASE_URL = 'http://localhost:8000'
 
 function App() {
   const [connections, setConnections] = useState([])

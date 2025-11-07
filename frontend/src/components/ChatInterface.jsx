@@ -3,9 +3,8 @@ import axios from 'axios'
 import MessageList from './MessageList'
 import ChatInput from './ChatInput'
 import QueryResult from './QueryResult'
+import { API_BASE_URL } from '../config'
 import './ChatInterface.css'
-
-const API_BASE_URL = 'http://localhost:8000'
 
 function ChatInterface({ connectionId, connectionName }) {
   const [messages, setMessages] = useState([])
